@@ -1,0 +1,1231 @@
+-- ===== SERVICES =====
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+local VirtualInputManager = pcall(function() return game:GetService("VirtualInputManager") end) and game:GetService("VirtualInputManager") or nil
+local VirtualUser = pcall(function() return game:GetService("VirtualUser") end) and game:GetService("VirtualUser") or nil
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- ===== STATE =====
+local RUNNING = true
+local FLY_ENABLED = false
+local FLY_SPEED_VAL = 100
+local INF_JUMP_ENABLED = false
+local CROUCH_ENABLED = false
+local JUMP_ENABLED = false
+local DOWNED_DASH_ENABLED = false
+local DOWNED_DASH_SPEED = 300
+local REALISTIC_BHOP_ENABLED = false
+local EMOTE_SPIN_ENABLED = false
+local AUTO_360_EMOTE_ENABLED = false
+local JUMP_POWER_VAL = 50
+local LAG_MS = 100
+local MOTION_BLUR_ENABLED = false
+local MOTION_BLUR_STRENGTH = 20
+local FULLBRIGHT_ENABLED = false
+local WALLS_REMOVED = false
+local FOV_ENABLED = false
+local FOV_VAL = 70
+local originalFOV = camera.FieldOfView
+local originalCollisions = {}
+local origLighting = {
+    Brightness    = Lighting.Brightness,
+    ClockTime     = Lighting.ClockTime,
+    FogEnd        = Lighting.FogEnd,
+    GlobalShadows = Lighting.GlobalShadows,
+}
+local ANTI_AFK_ENABLED = false
+local LastMovementTick = os.clock()
+local AUTO_BOUNCE_ENABLED = false
+local BOUNCE_POWER = 200
+local JUMP_BOOST_POWER = 100
+local DEMON_LAG_MS     = 200
+local DEMON_LAG_HEIGHT = 100
+local DEMON_LAG_SPEED  = 200
+local STREAK_FARM_ENABLED = false
+local STREAK_INTERVAL = 10
+local streakFarmThread = nil
+local streakPlatforms = nil
+local streakCurrentIndex = 1
+
+local MotionBlur = Instance.new("BlurEffect")
+MotionBlur.Name = "XKZNN_MotionBlur"
+MotionBlur.Size = 0
+MotionBlur.Parent = Lighting
+
+-- ===== DEMON LAG (declared early so keybind callback can use it) =====
+local function fireDemonLag()
+    local char = player.Character
+    local r = char and char:FindFirstChild("HumanoidRootPart")
+    if r then
+        pcall(function()
+            local look = camera.CFrame.LookVector * Vector3.new(1, 0, 1)
+            local horiz = look.Magnitude > 0 and look.Unit * DEMON_LAG_SPEED or Vector3.new(0,0,0)
+            r.AssemblyLinearVelocity = Vector3.new(horiz.X, DEMON_LAG_HEIGHT, horiz.Z)
+        end)
+    end
+    if DEMON_LAG_MS > 0 then
+        local s = os.clock()
+        while os.clock() - s < (DEMON_LAG_MS / 1000) do end
+    end
+end
+
+-- ===== RAYFIELD =====
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "XKZNN TEAM BETA",
+    LoadingTitle = "XKZNN TEAM BETA",
+    LoadingSubtitle = "by xkznn_Official",
+    Theme = "DarkBlue",
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings = true,
+    ConfigurationSaving = { Enabled = false },
+    Discord = { Enabled = false },
+    KeySystem = false,
+})
+
+-- ===== TABS =====
+local MovementTab = Window:CreateTab("Movement", 4483362458)
+local VisualTab   = Window:CreateTab("Visual",   4483362458)
+local FarmTab     = Window:CreateTab("Farm",     4483362458)
+local ScriptsTab  = Window:CreateTab("Scripts",  4483362458)
+local CreditsTab  = Window:CreateTab("Credits",  4483362458)
+
+-- ===================================================
+-- MOVEMENT TAB
+-- ===================================================
+MovementTab:CreateSection("Flight")
+
+MovementTab:CreateToggle({
+    Name = "Fly",
+    CurrentValue = false,
+    Flag = "FlyToggle",
+    Callback = function(val) FLY_ENABLED = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "Fly Speed",
+    Range = {10, 500},
+    Increment = 10,
+    Suffix = "speed",
+    CurrentValue = 100,
+    Flag = "FlySpeed",
+    Callback = function(val) FLY_SPEED_VAL = val end,
+})
+
+MovementTab:CreateSection("Jumping")
+
+MovementTab:CreateToggle({
+    Name = "Infinite Jump",
+    CurrentValue = false,
+    Flag = "InfJump",
+    Callback = function(val) INF_JUMP_ENABLED = val end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Auto Jump (BHop)",
+    CurrentValue = false,
+    Flag = "AutoJump",
+    Callback = function(val) JUMP_ENABLED = val end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Realistic BHop",
+    CurrentValue = false,
+    Flag = "RealisticBhop",
+    Callback = function(val) REALISTIC_BHOP_ENABLED = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "Jump Power",
+    Range = {10, 500},
+    Increment = 5,
+    Suffix = "power",
+    CurrentValue = 50,
+    Flag = "JumpPower",
+    Callback = function(val) JUMP_POWER_VAL = val end,
+})
+
+MovementTab:CreateSection("Crouch")
+
+MovementTab:CreateToggle({
+    Name = "Auto Crouch",
+    CurrentValue = false,
+    Flag = "AutoCrouch",
+    Callback = function(val) CROUCH_ENABLED = val end,
+})
+
+MovementTab:CreateSection("Downed / Dash")
+
+MovementTab:CreateToggle({
+    Name = "Downed Dash",
+    CurrentValue = false,
+    Flag = "DownedDash",
+    Callback = function(val) DOWNED_DASH_ENABLED = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "Dash Speed",
+    Range = {100, 1000},
+    Increment = 50,
+    Suffix = "speed",
+    CurrentValue = 300,
+    Flag = "DashSpeed",
+    Callback = function(val) DOWNED_DASH_SPEED = val end,
+})
+
+MovementTab:CreateSection("Emote / Spin")
+
+MovementTab:CreateToggle({
+    Name = "Continuous Spin",
+    CurrentValue = false,
+    Flag = "EmoteSpin",
+    Callback = function(val) EMOTE_SPIN_ENABLED = val end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Auto 360 (A/D Keys)",
+    CurrentValue = false,
+    Flag = "Auto360",
+    Callback = function(val) AUTO_360_EMOTE_ENABLED = val end,
+})
+
+MovementTab:CreateSection("Jump Power Burst")
+
+MovementTab:CreateSlider({
+    Name = "Burst Power",
+    Range = {10, 1000},
+    Increment = 10,
+    Suffix = "power",
+    CurrentValue = 100,
+    Flag = "JumpBoostPower",
+    Callback = function(val) JUMP_BOOST_POWER = val end,
+})
+
+MovementTab:CreateSection("Auto Bounce")
+
+MovementTab:CreateToggle({
+    Name = "Auto Bounce",
+    CurrentValue = false,
+    Flag = "AutoBounce",
+    Callback = function(val) AUTO_BOUNCE_ENABLED = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "Bounce Power",
+    Range = {50, 1000},
+    Increment = 10,
+    Suffix = "power",
+    CurrentValue = 200,
+    Flag = "BouncePower",
+    Callback = function(val) BOUNCE_POWER = val end,
+})
+
+MovementTab:CreateSection("Lag Switch")
+
+MovementTab:CreateSlider({
+    Name = "Lag Amount (ms)",
+    Range = {50, 2000},
+    Increment = 50,
+    Suffix = "ms",
+    CurrentValue = 100,
+    Flag = "LagMS",
+    Callback = function(val) LAG_MS = val end,
+})
+
+MovementTab:CreateButton({
+    Name = "Trigger Lag Spike",
+    Callback = function()
+        local s = os.clock()
+        while os.clock() - s < (LAG_MS / 1000) do end
+    end,
+})
+
+-- ===================================================
+-- DEMON LAG SWITCH
+-- ===================================================
+MovementTab:CreateSection("Demon Lag Switch")
+
+MovementTab:CreateParagraph({
+    Title = "How it works",
+    Content = "Launches you into the air AND freezes the game at the same time.\n\nHeight = upward velocity\nSpeed  = forward velocity\nMS     = freeze duration\n\nUse the button or bind a key below.",
+})
+
+MovementTab:CreateSlider({
+    Name = "Height (0 - 500)",
+    Range = {0, 500},
+    Increment = 5,
+    Suffix = "vel",
+    CurrentValue = 100,
+    Flag = "DemonLagHeight",
+    Callback = function(val) DEMON_LAG_HEIGHT = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "Speed (0 - 500)",
+    Range = {0, 500},
+    Increment = 5,
+    Suffix = "vel",
+    CurrentValue = 200,
+    Flag = "DemonLagSpeed",
+    Callback = function(val) DEMON_LAG_SPEED = val end,
+})
+
+MovementTab:CreateSlider({
+    Name = "MS (0 - 1000)",
+    Range = {0, 1000},
+    Increment = 10,
+    Suffix = "ms",
+    CurrentValue = 200,
+    Flag = "DemonLagMS",
+    Callback = function(val) DEMON_LAG_MS = val end,
+})
+
+MovementTab:CreateButton({
+    Name = "👹 Trigger Demon Lag",
+    Callback = function() fireDemonLag() end,
+})
+
+-- ===================================================
+-- KEYBINDS
+-- ===================================================
+MovementTab:CreateSection("Keybinds")
+
+MovementTab:CreateParagraph({
+    Title = "How to bind",
+    Content = "Click the key box next to any feature, then press the key you want.\nThe key name will appear in the box.\nPress Escape or Backspace while the box is selected to clear it.",
+})
+
+MovementTab:CreateKeybind({
+    Name = "Fly Toggle",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_Fly",
+    Callback = function()
+        FLY_ENABLED = not FLY_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Infinite Jump",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_InfJump",
+    Callback = function()
+        INF_JUMP_ENABLED = not INF_JUMP_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Auto Jump / BHop",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_AutoJump",
+    Callback = function()
+        JUMP_ENABLED = not JUMP_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Realistic Bhop",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_RealisticBhop",
+    Callback = function()
+        REALISTIC_BHOP_ENABLED = not REALISTIC_BHOP_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Auto Crouch",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_AutoCrouch",
+    Callback = function()
+        CROUCH_ENABLED = not CROUCH_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Downed Dash",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_DownedDash",
+    Callback = function()
+        DOWNED_DASH_ENABLED = not DOWNED_DASH_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Continuous Spin",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_Spin",
+    Callback = function()
+        EMOTE_SPIN_ENABLED = not EMOTE_SPIN_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Auto 360",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_Auto360",
+    Callback = function()
+        AUTO_360_EMOTE_ENABLED = not AUTO_360_EMOTE_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Lag Spike",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_LagSpike",
+    Callback = function()
+        local s = os.clock()
+        while os.clock() - s < (LAG_MS / 1000) do end
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Auto Bounce",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_AutoBounce",
+    Callback = function()
+        AUTO_BOUNCE_ENABLED = not AUTO_BOUNCE_ENABLED
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "Jump Power Burst",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_JumpBoost",
+    Callback = function()
+        local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if r then
+            pcall(function()
+                r.AssemblyLinearVelocity = Vector3.new(
+                    r.AssemblyLinearVelocity.X,
+                    JUMP_BOOST_POWER,
+                    r.AssemblyLinearVelocity.Z
+                )
+            end)
+        end
+    end,
+})
+
+MovementTab:CreateKeybind({
+    Name = "👹 Demon Lag Switch",
+    CurrentKeybind = "None",
+    HoldToInteract = false,
+    Flag = "KB_DemonLag",
+    Callback = function()
+        fireDemonLag()
+    end,
+})
+
+-- Infinite jump space handler
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if INF_JUMP_ENABLED and input.KeyCode == Enum.KeyCode.Space then
+        local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if h then h:ChangeState(3) end
+    end
+end)
+
+-- ===================================================
+-- VISUAL TAB
+-- ===================================================
+VisualTab:CreateSection("World")
+
+VisualTab:CreateToggle({
+    Name = "Fullbright",
+    CurrentValue = false,
+    Flag = "Fullbright",
+    Callback = function(val)
+        FULLBRIGHT_ENABLED = val
+        if val then
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 14
+            Lighting.GlobalShadows = false
+        else
+            Lighting.Brightness    = origLighting.Brightness
+            Lighting.ClockTime     = origLighting.ClockTime
+            Lighting.GlobalShadows = origLighting.GlobalShadows
+        end
+    end,
+})
+
+VisualTab:CreateToggle({
+    Name = "Remove Invisible Walls",
+    CurrentValue = false,
+    Flag = "WallRemover",
+    Callback = function(val)
+        WALLS_REMOVED = val
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") and v.Transparency >= 0.9 then
+                if val then
+                    originalCollisions[v] = v.CanCollide
+                    v.CanCollide = false
+                else
+                    if originalCollisions[v] ~= nil then
+                        v.CanCollide = originalCollisions[v]
+                    end
+                end
+            end
+        end
+    end,
+})
+
+VisualTab:CreateSection("Camera")
+
+VisualTab:CreateToggle({
+    Name = "Motion Blur",
+    CurrentValue = false,
+    Flag = "MotionBlur",
+    Callback = function(val)
+        MOTION_BLUR_ENABLED = val
+        if not val then MotionBlur.Size = 0 end
+    end,
+})
+
+VisualTab:CreateSlider({
+    Name = "Blur Strength",
+    Range = {0, 50},
+    Increment = 1,
+    Suffix = "strength",
+    CurrentValue = 20,
+    Flag = "BlurStrength",
+    Callback = function(val)
+        MOTION_BLUR_STRENGTH = val
+        if MOTION_BLUR_ENABLED then MotionBlur.Size = val end
+    end,
+})
+
+VisualTab:CreateSlider({
+    Name = "Field of View",
+    Range = {70, 180},
+    Increment = 1,
+    Suffix = "fov",
+    CurrentValue = 70,
+    Flag = "FOVSlider",
+    Callback = function(val)
+        FOV_VAL = val
+        FOV_ENABLED = true
+        pcall(function() camera.FieldOfView = val end)
+    end,
+})
+
+VisualTab:CreateButton({
+    Name = "Reset FOV",
+    Callback = function()
+        FOV_ENABLED = false
+        pcall(function() camera.FieldOfView = originalFOV end)
+    end,
+})
+
+VisualTab:CreateSection("Shaders")
+
+VisualTab:CreateButton({
+    Name = "PAID SHADER",
+    Callback = function()
+        loadstring(game:HttpGet('https://gist.githubusercontent.com/sn3514ube16-droid/36068140381f68d2b3838d5ebd74bdfa/raw/d95ecd0630e174c46fe705b8991acbe6cc9e00ab/shader3'))()
+    end,
+})
+
+VisualTab:CreateButton({
+    Name = "Free Shader",
+    Callback = function()
+        loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Shader-uTility-205894"))()
+    end,
+})
+
+VisualTab:CreateButton({
+    Name = "ShaderZ by Nitro",
+    Callback = function()
+        loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-ShaderZ-Realistic-RTX-HD-Textures-BY-NITRO-212733"))()
+    end,
+})
+
+VisualTab:CreateSection("Skin")
+
+VisualTab:CreateButton({
+    Name = "Open Skin Changer",
+    Callback = function()
+        loadstring(game:HttpGet("https://pastebin.com/raw/FYqUYMTg"))()
+    end,
+})
+
+VisualTab:CreateSection("Headless")
+
+local headlessEnabled = false
+local headlessLoopConn = nil
+local headlessDescConn = nil
+
+local function enforceHeadless()
+    local char = player.Character; if not char then return end
+    local head = char:FindFirstChild("Head"); if not head then return end
+    pcall(function() head.Transparency = 1; head.LocalTransparencyModifier = 1 end)
+    for _, obj in pairs(head:GetChildren()) do
+        pcall(function()
+            if obj:IsA("Decal") then obj.Transparency = 1
+            elseif obj:IsA("SpecialMesh") then obj.Scale = Vector3.new(0,0,0) end
+        end)
+    end
+end
+
+local function restoreHead()
+    local char = player.Character; if not char then return end
+    local head = char:FindFirstChild("Head"); if not head then return end
+    pcall(function() head.Transparency = 0; head.LocalTransparencyModifier = 0 end)
+    for _, obj in pairs(head:GetChildren()) do
+        pcall(function()
+            if obj:IsA("Decal") then obj.Transparency = 0
+            elseif obj:IsA("SpecialMesh") then obj.Scale = Vector3.new(1,1,1) end
+        end)
+    end
+end
+
+local function startHeadless()
+    if headlessLoopConn then headlessLoopConn:Disconnect() end
+    if headlessDescConn then headlessDescConn:Disconnect() end
+    headlessLoopConn = RunService.Heartbeat:Connect(function()
+        if headlessEnabled then enforceHeadless() end
+    end)
+    local char = player.Character
+    if char then
+        headlessDescConn = char.DescendantAdded:Connect(function()
+            task.wait()
+            if headlessEnabled then enforceHeadless() end
+        end)
+    end
+    enforceHeadless()
+end
+
+local function stopHeadless()
+    if headlessLoopConn then headlessLoopConn:Disconnect(); headlessLoopConn = nil end
+    if headlessDescConn then headlessDescConn:Disconnect(); headlessDescConn = nil end
+    restoreHead()
+end
+
+VisualTab:CreateToggle({
+    Name = "Headless",
+    CurrentValue = false,
+    Flag = "Headless",
+    Callback = function(val)
+        headlessEnabled = val
+        if val then startHeadless() else stopHeadless() end
+    end,
+})
+
+player.CharacterAdded:Connect(function()
+    task.wait(1.5)
+    if headlessEnabled then startHeadless() end
+end)
+
+VisualTab:CreateSection("Korblox Giver")
+
+local korbloxEnabled = false
+local korbloxAccessory = nil
+
+local function applyKorblox()
+    local char = player.Character; if not char then return end
+    if korbloxAccessory and korbloxAccessory.Parent then korbloxAccessory:Destroy(); korbloxAccessory = nil end
+    local ok = pcall(function()
+        local acc = game:GetObjects("rbxassetid://139607718")[1]
+        if acc then acc.Parent = char; korbloxAccessory = acc end
+    end)
+    if not ok or not korbloxAccessory then
+        pcall(function()
+            local IS = game:GetService("InsertService")
+            local model = IS:LoadAsset(139607718)
+            local acc = model:FindFirstChildOfClass("Accessory") or model:FindFirstChildOfClass("Hat")
+            if acc then acc.Parent = char; korbloxAccessory = acc; model:Destroy()
+            else model:Destroy() end
+        end)
+    end
+end
+
+local function removeKorblox()
+    if korbloxAccessory and korbloxAccessory.Parent then korbloxAccessory:Destroy() end
+    korbloxAccessory = nil
+    local char = player.Character
+    if char then
+        for _, obj in pairs(char:GetChildren()) do
+            if (obj:IsA("Accessory") or obj:IsA("Hat")) and obj.Name:lower():find("korblox") then obj:Destroy() end
+        end
+    end
+end
+
+VisualTab:CreateToggle({
+    Name = "Korblox Right Leg",
+    CurrentValue = false,
+    Flag = "KorbloxGiver",
+    Callback = function(val)
+        korbloxEnabled = val
+        if val then applyKorblox() else removeKorblox() end
+    end,
+})
+
+player.CharacterAdded:Connect(function()
+    korbloxAccessory = nil
+    task.wait(1.5)
+    if korbloxEnabled then applyKorblox() end
+end)
+
+VisualTab:CreateSection("Map Loader")
+
+VisualTab:CreateParagraph({
+    Title = "⚠️ WARNING — PRIVATE SERVERS ONLY",
+    Content = "Using the Map Loader on public servers can result in a ban.\nOnly use this feature in private servers you own.",
+})
+
+VisualTab:CreateParagraph({
+    Title = "How to use",
+    Content = "1. Find a Model on the Roblox library (free models, maps, etc).\n2. Open the model page and copy the Asset ID from the URL.\n   Example URL: roblox.com/library/1234567890/my-map\n   Your ID would be: 1234567890\n3. Paste the ID in the box below.\n4. (Optional) Adjust Scale and Spawn Height.\n5. Click 'Load Map' — the map will appear and you'll be teleported to it.\n6. Click 'Remove Map' to destroy it when done.",
+})
+
+local mapLoaderID = ""
+local MAP_SCALE = 1.0
+local MAP_HEIGHT = 1500
+
+VisualTab:CreateInput({
+    Name = "Map Asset ID",
+    PlaceholderText = "e.g. 1234567890",
+    RemoveTextAfterFocusLost = false,
+    Flag = "MapLoaderID",
+    Callback = function(val) mapLoaderID = val end,
+})
+
+VisualTab:CreateSlider({
+    Name = "Scale",
+    Range = {1, 10},
+    Increment = 1,
+    Suffix = "x",
+    CurrentValue = 1,
+    Flag = "MapScale",
+    Callback = function(val) MAP_SCALE = val end,
+})
+
+VisualTab:CreateSlider({
+    Name = "Spawn Height",
+    Range = {100, 5000},
+    Increment = 100,
+    Suffix = "studs",
+    CurrentValue = 1500,
+    Flag = "MapHeight",
+    Callback = function(val) MAP_HEIGHT = val end,
+})
+
+VisualTab:CreateButton({
+    Name = "✅ Load Map",
+    Callback = function()
+        local assetId = tostring(mapLoaderID):match("%d+")
+        if not assetId or assetId == "" then
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Map Loader", Text = "Please enter a valid Asset ID first.", Duration = 4
+            })
+            return
+        end
+
+        local char = player.Character
+        local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+
+        -- Remove old injected map
+        for _, old in pairs(workspace:GetChildren()) do
+            if old.Name == "XKZNN_InjectedMap" then old:Destroy() end
+        end
+
+        -- Set sunrise sky
+        local L = game:GetService("Lighting")
+        for _, obj in pairs(L:GetChildren()) do
+            if obj:IsA("Sky") or obj:IsA("Atmosphere") then obj:Destroy() end
+        end
+        local sky = Instance.new("Sky", L)
+        sky.SkyboxBk = "rbxassetid://252760981"
+        sky.SkyboxDn = "rbxassetid://252763921"
+        sky.SkyboxFt = "rbxassetid://252761439"
+        sky.SkyboxLf = "rbxassetid://252761439"
+        sky.SkyboxRt = "rbxassetid://252761439"
+        sky.SkyboxUp = "rbxassetid://252762708"
+        sky.SunAngularSize = 25
+        L.ClockTime = 6.3
+        L.Brightness = 2.5
+        L.OutdoorAmbient = Color3.fromRGB(160, 120, 100)
+        L.ExposureCompensation = 0.5
+        local atm = Instance.new("Atmosphere", L)
+        atm.Density = 0.25
+        atm.Color = Color3.fromRGB(255, 200, 160)
+        atm.Glare = 0.4
+
+        -- Load map
+        local success, err = pcall(function()
+            local objects = game:GetObjects("rbxassetid://" .. assetId)
+            local mapModel = objects[1]
+            if not mapModel then return end
+
+            if not mapModel:IsA("Model") then
+                local folder = Instance.new("Model", workspace)
+                mapModel.Parent = folder
+                mapModel = folder
+            end
+
+            mapModel.Name = "XKZNN_InjectedMap"
+            mapModel.Parent = workspace
+            mapModel:ScaleTo(mapModel:GetScale() * MAP_SCALE)
+
+            for _, part in pairs(mapModel:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    if part.Transparency > 1.0 and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                    if part.CanCollide then
+                        part.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0, 1, 0.5, 1)
+                    end
+                end
+            end
+
+            local targetPos = Vector3.new(rootPart.Position.X, MAP_HEIGHT, rootPart.Position.Z)
+            mapModel:MoveTo(targetPos)
+
+            task.wait(0.6)
+
+            local mapCenter = mapModel:GetModelCFrame()
+            rootPart.CFrame = mapCenter + Vector3.new(0, 20, 0)
+
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Map Loader", Text = "Map loaded! Scale: " .. MAP_SCALE .. "x", Duration = 4
+            })
+        end)
+
+        if not success then
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Map Loader Error", Text = "Failed to load map. Check the Asset ID.", Duration = 5
+            })
+            warn(err)
+        end
+    end,
+})
+
+VisualTab:CreateButton({
+    Name = "🗑️ Remove Map",
+    Callback = function()
+        for _, old in pairs(workspace:GetChildren()) do
+            if old.Name == "XKZNN_InjectedMap" then old:Destroy() end
+        end
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Map Loader", Text = "Map removed.", Duration = 3
+        })
+    end,
+})
+
+VisualTab:CreateSection("Skybox Changer")
+
+VisualTab:CreateParagraph({
+    Title = "How to use",
+    Content = "1. Find a Skybox on the Roblox library.\n2. Copy its Asset ID.\n3. Paste it below and click Apply.\n\nExample ID: 185182796",
+})
+
+local skyboxInput = ""
+
+VisualTab:CreateInput({
+    Name = "Skybox Asset ID",
+    PlaceholderText = "e.g. 185182796",
+    RemoveTextAfterFocusLost = false,
+    Flag = "SkyboxID",
+    Callback = function(val) skyboxInput = val end,
+})
+
+VisualTab:CreateButton({
+    Name = "Apply Skybox",
+    Callback = function()
+        local assetId = tostring(skyboxInput):match("%d+")
+        if not assetId or assetId == "" then return end
+        local L = game:GetService("Lighting")
+        for _, obj in ipairs(L:GetChildren()) do if obj:IsA("Sky") then obj:Destroy() end end
+        local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. assetId) end)
+        if ok and objects and objects[1] then objects[1].Parent = L end
+    end,
+})
+
+VisualTab:CreateButton({
+    Name = "Remove Skybox",
+    Callback = function()
+        local L = game:GetService("Lighting")
+        for _, obj in ipairs(L:GetChildren()) do if obj:IsA("Sky") then obj:Destroy() end end
+    end,
+})
+
+-- ===================================================
+-- FARM TAB
+-- ===================================================
+FarmTab:CreateSection("Anti-AFK")
+
+FarmTab:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = false,
+    Flag = "AntiAFK",
+    Callback = function(val) ANTI_AFK_ENABLED = val end,
+})
+
+-- Streak Farm logic
+local STREAK_POSITIONS = {
+    Vector3.new(50000,  155000,  0),
+    Vector3.new(-50000, 155000,  50000),
+    Vector3.new(0,      155000, -50000),
+}
+local PLATFORM_SIZE = Vector3.new(2, 1, 2)
+
+local function createStreakPlatforms()
+    if streakPlatforms then
+        for _, p in pairs(streakPlatforms) do if p and p.Parent then p:Destroy() end end
+    end
+    streakPlatforms = {}
+    for i, pos in ipairs(STREAK_POSITIONS) do
+        local p = Instance.new("Part")
+        p.Name = "XKZNN_StreakPlatform_" .. i
+        p.Size = PLATFORM_SIZE
+        p.CFrame = CFrame.new(pos - Vector3.new(0, 5, 0))
+        p.Anchored = true; p.Transparency = 0.4
+        p.BrickColor = BrickColor.new("Bright blue")
+        p.Material = Enum.Material.ForceField
+        p.CanTouch = false; p.CanQuery = false
+        p.Parent = workspace
+        streakPlatforms[i] = p
+    end
+end
+
+local function removeStreakPlatforms()
+    if streakPlatforms then
+        for _, p in pairs(streakPlatforms) do if p and p.Parent then p:Destroy() end end
+        streakPlatforms = nil
+    end
+end
+
+local function runStreakFarm()
+    createStreakPlatforms()
+    local lockConn = RunService.Heartbeat:Connect(function()
+        if not STREAK_FARM_ENABLED then return end
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            pcall(function()
+                hrp.CFrame = CFrame.new(STREAK_POSITIONS[streakCurrentIndex])
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
+            for _, p in pairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.CanTouch = false; p.CanQuery = false
+                    if p.Name ~= "HumanoidRootPart" then p.CanCollide = false end
+                end
+            end
+        end
+    end)
+    while STREAK_FARM_ENABLED and RUNNING do
+        local elapsed = 0
+        while STREAK_FARM_ENABLED and elapsed < STREAK_INTERVAL do
+            elapsed = elapsed + task.wait(0.1)
+        end
+        if not STREAK_FARM_ENABLED then break end
+        streakCurrentIndex = (streakCurrentIndex % #STREAK_POSITIONS) + 1
+    end
+    lockConn:Disconnect()
+    removeStreakPlatforms()
+    local char = player.Character
+    if char then
+        for _, p in pairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanTouch = true; p.CanQuery = true; p.CanCollide = true end
+        end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then pcall(function() hrp.CFrame = CFrame.new(0, 10, 0) end) end
+    end
+end
+
+FarmTab:CreateSection("Streak Farm")
+
+FarmTab:CreateParagraph({
+    Title = "⚠️ WARNING",
+    Content = "USE ON PRIVATE SERVERS ONLY.\nHigh risk of ban on public servers.",
+})
+
+FarmTab:CreateParagraph({
+    Title = "How it works",
+    Content = "Rotates your character between 3 tiny 2x2 platforms that NPCs cannot reach.\nSet your interval and click Start.",
+})
+
+FarmTab:CreateSlider({
+    Name = "TP Interval (seconds)",
+    Range = {1, 100},
+    Increment = 1,
+    Suffix = "sec",
+    CurrentValue = 10,
+    Flag = "StreakInterval",
+    Callback = function(val) STREAK_INTERVAL = val end,
+})
+
+FarmTab:CreateButton({
+    Name = "Start Streak Farm",
+    Callback = function()
+        if STREAK_FARM_ENABLED then return end
+        STREAK_FARM_ENABLED = true
+        streakCurrentIndex = 1
+        streakFarmThread = task.spawn(runStreakFarm)
+    end,
+})
+
+FarmTab:CreateButton({
+    Name = "Stop Streak Farm",
+    Callback = function()
+        STREAK_FARM_ENABLED = false
+    end,
+})
+
+-- Anti-AFK loop
+task.spawn(function()
+    while RUNNING do
+        if ANTI_AFK_ENABLED then
+            pcall(function()
+                if VirtualUser then
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0, 0), camera.CFrame)
+                end
+            end)
+            pcall(function()
+                if VirtualInputManager then
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F13, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F13, false, game)
+                end
+            end)
+            pcall(function()
+                local oc = camera.CFrame
+                camera.CFrame = oc * CFrame.Angles(0, 0, math.rad(0.01))
+                task.wait(0.05)
+                camera.CFrame = oc
+            end)
+            LastMovementTick = os.clock()
+        end
+        task.wait(math.random(60, 180))
+    end
+end)
+
+pcall(function()
+    player.Idled:Connect(function()
+        if ANTI_AFK_ENABLED then
+            pcall(function()
+                if VirtualUser then
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0, 0), camera.CFrame)
+                end
+            end)
+        end
+    end)
+end)
+
+-- ===================================================
+-- SCRIPTS TAB
+-- ===================================================
+ScriptsTab:CreateSection("Script Loader")
+
+ScriptsTab:CreateButton({
+    Name = "PAID SCRIPT",
+    Callback = function()
+        loadstring(game:HttpGet('https://gist.githubusercontent.com/sn3514ube16-droid/e49ae61b795421a259ee6342114709c6/raw/cad375faae4d4ec38b9486e9d805351dff73f469/%EC%9D%B4%EC%A4%91%EB%AC%B8'))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "FREE SCRIPT",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/K1NETCX/K1NETCX/refs/heads/main/Motion%20Tech"))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "ORIGINAL SCRIPT",
+    Callback = function()
+        loadstring(game:HttpGet("https://pastebin.com/raw/t1e6Xaya"))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "SHADER PAID",
+    Callback = function()
+        loadstring(game:HttpGet('https://gist.githubusercontent.com/sn3514ube16-droid/36068140381f68d2b3838d5ebd74bdfa/raw/d95ecd0630e174c46fe705b8991acbe6cc9e00ab/shader3'))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "LightningWareV2",
+    Callback = function()
+        loadstring(game:HttpGet("https://api.luarmor.net/files/v3/loaders/f3ed0bc1276c97a6404b78a360196d2d.lua"))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "DraconicHub",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Unknownproooolucky/Draconic-Hub-X/refs/heads/main/files/Evade/Overhaul.lua"))()
+    end,
+})
+
+ScriptsTab:CreateButton({
+    Name = "Verous Wave",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/adiwpiasopddwa78fasd7as6d1v6a48wa7vsadv/Verous-Wave/refs/heads/main/main.lua"))()
+    end,
+})
+-- ===================================================
+-- CREDITS TAB
+-- ===================================================
+CreditsTab:CreateSection("Thank You")
+
+CreditsTab:CreateParagraph({
+    Title = "Special Thanks to :",
+    Content = "xkznn_Official\nMovement Ware V3/V2\nMotion Tech\nDownyw\nDraconicHub\nLightningWareV2\nVerous Hub",
+})
+
+CreditsTab:CreateSection("Development Team")
+
+CreditsTab:CreateParagraph({ Title = "Founder",  Content = "xkznn_Official" })
+CreditsTab:CreateParagraph({
+    Title = "Helpers",
+    Content = "MovementWareV2/V3\nMotion Tech\nDownyw\nDraconicHub\nLightningWareV2\nVerous Hub"
+})
+
+CreditsTab:CreateSection("Message")
+
+CreditsTab:CreateParagraph({
+    Title = "Appreciation",
+    Content = "Thank you a lot for helping developing this script!",
+})
+
+-- ===================================================
+-- RENDER LOOP
+-- ===================================================
+RunService.RenderStepped:Connect(function()
+    local char = player.Character
+    local r = char and char:FindFirstChild("HumanoidRootPart")
+    if not r then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    if DOWNED_DASH_ENABLED and hum and hum.Health <= 0
+        and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+        and not FLY_ENABLED then
+        hum.WalkSpeed = 0
+        local ld = camera.CFrame.LookVector * Vector3.new(1, 0, 1)
+        if ld.Magnitude > 0 then
+            pcall(function() r.Velocity = (ld.Unit * DOWNED_DASH_SPEED) + Vector3.new(0, -35, 0) end)
+        end
+    elseif hum then
+        hum.JumpPower = JUMP_POWER_VAL or 50
+    end
+
+    local pt = hum and hum:GetPlayingAnimationTracks() or {}
+    local ie = #pt > 0
+    if EMOTE_SPIN_ENABLED and ie then
+        r.CFrame = r.CFrame * CFrame.Angles(0, math.rad(50), 0)
+    end
+    if AUTO_360_EMOTE_ENABLED and ie then
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            r.CFrame = r.CFrame * CFrame.Angles(0, math.rad(120), 0)
+        elseif UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            r.CFrame = r.CFrame * CFrame.Angles(0, math.rad(-120), 0)
+        end
+    end
+
+    if FLY_ENABLED then
+        local d = Vector3.new(0, 0, 0)
+        local cam = camera.CFrame
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then d += cam.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then d -= cam.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then d -= cam.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then d += cam.RightVector end
+        local vy = 0
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space)        then vy =  FLY_SPEED_VAL
+        elseif UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then vy = -FLY_SPEED_VAL end
+        pcall(function() r.Velocity = Vector3.new(d.X * FLY_SPEED_VAL, vy, d.Z * FLY_SPEED_VAL) end)
+
+    elseif REALISTIC_BHOP_ENABLED and hum
+        and hum.FloorMaterial ~= Enum.Material.Air
+        and r.AssemblyLinearVelocity.Magnitude > 1 then
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 20, r.AssemblyLinearVelocity.Z)
+        end)
+        task.spawn(function()
+            pcall(function()
+                if VirtualInputManager then
+                    VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.LeftControl, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+                end
+            end)
+        end)
+
+    elseif JUMP_ENABLED and hum
+        and hum.FloorMaterial ~= Enum.Material.Air
+        and r.AssemblyLinearVelocity.Magnitude > 1 then
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 20, r.AssemblyLinearVelocity.Z)
+        end)
+    end
+
+    if MOTION_BLUR_ENABLED then
+        pcall(function() MotionBlur.Size = math.clamp(r.Velocity.Magnitude / 2, 0, MOTION_BLUR_STRENGTH) end)
+    end
+
+    if AUTO_BOUNCE_ENABLED and hum and hum.FloorMaterial ~= Enum.Material.Air then
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.new(
+                r.AssemblyLinearVelocity.X, BOUNCE_POWER, r.AssemblyLinearVelocity.Z
+            )
+        end)
+    end
+end)
+
+-- FOV lock
+camera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+    if FOV_ENABLED and camera.FieldOfView ~= FOV_VAL then
+        pcall(function() camera.FieldOfView = FOV_VAL end)
+    end
+end)
+
+-- Auto crouch loop
+task.spawn(function()
+    while RUNNING do
+        if CROUCH_ENABLED and not FLY_ENABLED then
+            pcall(function()
+                if VirtualInputManager then
+                    VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.LeftControl, false, game)
+                    task.wait(0.04)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+                end
+            end)
+            task.wait(0.04)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+-- Platform stand (downed)
+task.spawn(function()
+    while RUNNING do
+        pcall(function()
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                player.Character.Humanoid.PlatformStand =
+                    (player.Character.Humanoid.Health <= 0 and DOWNED_DASH_ENABLED)
+            end
+        end)
+        task.wait(1)
+    end
+end)
